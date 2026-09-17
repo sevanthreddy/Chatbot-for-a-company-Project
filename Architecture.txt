@@ -1,0 +1,8 @@
+#Chunking Strategy
+So we are given department level docs and with heading with ascending numbers which is hierarchy.so we can chunk like this :
+each chunk will have department,parent heading if any,own heading.
+For Example:    heading1:    Engineering
+                heading2:        ## 2. System Architecture
+                heading3:            2.2 High-Level Architecture
+if the data under a particular heading exceeds certain fixed token length we create an another chunk with same headings.
+this allows us to have parent child relationships chunking in our docs.
