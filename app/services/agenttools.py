@@ -9,6 +9,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
+CURRENT_USER_ROLE = "general"
+
 
 def get_cached_huggingface_embeddings(model_name: str):
     """
@@ -38,8 +40,11 @@ def sql_query(sql_query: str) -> str:
     Database:
     companydb
 
-    Table:
-    dbo.hr_data
+    Schema:
+    ai_schema
+
+    views:
+    ai_schema.EmployeeData
 
     Columns available:
     employee_id,
@@ -61,7 +66,7 @@ def sql_query(sql_query: str) -> str:
     Employee IDs are strings such as:
     FINEMP1000, FINEMP1001, FINEMP1002.
 
-    Always use dbo.hr_data when querying employee information.
+    Always use ai_schema.EmployeeData when querying employee information.
 
     Always write standard T-SQL queries.
 
@@ -69,20 +74,20 @@ def sql_query(sql_query: str) -> str:
 
     For employee salary:
     SELECT salary
-    FROM dbo.hr_data
+    FROM ai_schema.EmployeeData
     WHERE employee_id = 'FINEMP1000'
 
     For employee leave balance:
     SELECT leave_balance
-    FROM dbo.hr_data
+    FROM ai_schema.EmployeeData
     WHERE employee_id = 'FINEMP1000'
     """
 
     try:
         connection_string = (
             f"mssql+pymssql://"
-            f"{os.getenv('DB_USER')}:"
-            f"{urllib.parse.quote_plus(os.getenv('DB_PASSWORD'))}"
+            f"{os.getenv('AI_DB_USER')}:"
+            f"{urllib.parse.quote_plus(os.getenv('AI_DB_PASSWORD'))}"
             f"@localhost:1434/"
             f"{os.getenv('DB_DATABASE')}"
         )
@@ -110,67 +115,39 @@ def vector_search(query: str) -> str:
 
     IMPORTANT:
     The query argument is REQUIRED.
-
-    Always provide a meaningful search query describing
-    exactly what information you want to retrieve.
-
-    Use this tool for:
-    - company technical architecture
-    - technology stack
-    - engineering documentation
-    - system architecture
-    - APIs and services
-    - infrastructure
-    - engineering processes
-    - HR policies
-    - company policies
-    - SOPs
-    - internal documentation
-
-    Examples:
-
-    User:
-    "What is the company's technical architecture?"
-
-    Correct tool call:
-    vector_search(
-        query="company technical architecture technology stack systems APIs infrastructure"
-    )
-
-    User:
-    "What is the leave policy?"
-
-    Correct tool call:
-    vector_search(
-        query="company employee leave policy"
-    )
-
-    Never call vector_search without the query argument.
     """
 
     try:
+        global CURRENT_USER_ROLE
 
-        # Load model from cache
+        normalized_role = (CURRENT_USER_ROLE or "general").strip().lower()
+        allowed_roles = {"engineering", "finance", "general", "hr", "marketing"}
+        if normalized_role not in allowed_roles:
+            normalized_role = "general"
+
         embeddings = get_cached_huggingface_embeddings("BAAI/bge-m3")
 
-        # Connect to existing Pinecone index
         vector_store = PineconeVectorStore(
             index_name=os.getenv("PINECONE_INDEX_NAME"),
             embedding=embeddings,
             pinecone_api_key=os.getenv("PINECONE_API_KEY"),
         )
 
-        # Similarity search
-        results = vector_store.similarity_search(query=query, k=5)
+        results = vector_store.similarity_search(
+            query=query,
+            k=5,
+            filter={"department": normalized_role},
+        )
 
         if not results:
-            return "No relevant documents found."
+            return (
+                f"No relevant documents found for the '{normalized_role}' role. "
+                "This department may not have matching documentation."
+            )
 
-        # Format results for the LLM
         response = []
 
         for i, result in enumerate(results, start=1):
-
             response.append(
                 f"Result {i}\n"
                 f"Content: {result.page_content}\n"

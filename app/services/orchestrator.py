@@ -46,6 +46,8 @@ You have access to two tools:
 
 2. vector_search
    Use this when the user asks about engineering,marketing,finance,general company information.
+   The vector search results will only give results based on the role of the user. For example, if the user is from HR, they will only get results related to HR policies and not engineering or finance policies.
+   So let user know that they will only get results based on their role and if they want to get results from other departments, they should contact the respective department.
    
    Examples:
    - leave policy
@@ -65,6 +67,7 @@ Important rules:
   use both tools.
 - Do not make up company policies or employee information.
 - Use the information returned by the tools to answer the user.
+-If you get zero results from vector search, tell the user that you could not find any information related to their query and suggest them to contact the respective department for more information.
 """
 
 # ---------------------------------------------------------
