@@ -1,5 +1,6 @@
 import streamlit as st
 
+import services.orchestrator as orchestrator
 from services.agenttools import CURRENT_USER_ROLE
 from services.saveconversations import save_message
 from services.orchestrator import ask_agent
@@ -49,6 +50,7 @@ if st.session_state.user is None:
                 import services.agenttools as agenttools
 
                 agenttools.CURRENT_USER_ROLE = user["role"]
+                orchestrator.refresh_agent_tools()
                 st.rerun()
             else:
                 st.error("Invalid username or password")

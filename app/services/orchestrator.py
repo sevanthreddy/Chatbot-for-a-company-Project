@@ -23,7 +23,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 
 # Import the tools we created earlier
-from services.agenttools import sql_query, vector_search
+from services import agenttools
 
 SYSTEM_PROMPT = """
 You are an chat  assistant for our company.
@@ -108,7 +108,19 @@ llm = get_llm()
 # 4. REGISTER OUR TOOLS
 # ---------------------------------------------------------
 
-tools = [sql_query, vector_search]
+
+def build_tools_for_role(current_user_role=None):
+    role = (
+        (current_user_role or agenttools.CURRENT_USER_ROLE or "general").strip().lower()
+    )
+    sql_tool = agenttools.get_sql_tool(role)
+    print("CURRENT USER ROLE:", repr(role))
+
+    tools = []
+    if sql_tool is not None:
+        tools.append(sql_tool)
+    tools.append(agenttools.vector_search)
+    return tools
 
 
 # ---------------------------------------------------------
@@ -129,12 +141,11 @@ or
     vector_search(...)
 """
 
-llm_with_tools = llm.bind_tools(tools)
 
-
-# ---------------------------------------------------------
-# 6. CREATE THE LLM NODE
-# ---------------------------------------------------------
+llm_with_tools = None
+tools = []
+tool_node = None
+graph = None
 
 
 def call_llm(state: State):
@@ -143,128 +154,33 @@ def call_llm(state: State):
 
     response = llm_with_tools.invoke(messages)
 
-    # DEBUG: show exactly what Qwen generated
-
-    # DEBUG: specifically show tool calls
     print("Tool calls:")
     print(response.tool_calls)
 
     return {"messages": [response]}
 
 
-# ---------------------------------------------------------
-# 7. CREATE THE TOOL NODE
-# ---------------------------------------------------------
+def refresh_agent_tools():
+    global llm_with_tools, tool_node, graph, tools
 
-"""
-ToolNode is responsible for actually executing tools.
+    tools = build_tools_for_role(agenttools.CURRENT_USER_ROLE)
+    llm_with_tools = llm.bind_tools(tools)
+    for tool in tools:
+        print("TOOL NAME:", tool.name)
+        print("TOOL SCHEMA:", tool.args_schema.model_json_schema())
 
-For example, if Qwen generates:
+    tool_node = ToolNode(tools)
 
-    sql_query(
-        "SELECT * FROM hr_data WHERE employee_id = 101"
-    )
-
-ToolNode executes our Python function:
-
-    sql_query(...)
-
-and puts the result back into the messages.
-"""
-
-tool_node = ToolNode(tools)
+    graph_builder = StateGraph(State)
+    graph_builder.add_node("llm", call_llm)
+    graph_builder.add_node("tools", tool_node)
+    graph_builder.add_edge(START, "llm")
+    graph_builder.add_conditional_edges("llm", tools_condition)
+    graph_builder.add_edge("tools", "llm")
+    graph = graph_builder.compile()
 
 
-# ---------------------------------------------------------
-# 8. BUILD THE LANGGRAPH
-# ---------------------------------------------------------
-
-graph_builder = StateGraph(State)
-
-
-# Add our two types of nodes:
-
-# Node 1:
-# Qwen / LLM
-graph_builder.add_node("llm", call_llm)
-
-# Node 2:
-# Tool executor
-graph_builder.add_node("tools", tool_node)
-
-
-# ---------------------------------------------------------
-# 9. DEFINE THE GRAPH FLOW
-# ---------------------------------------------------------
-
-"""
-The initial flow is:
-
-START
-  ↓
-LLM
-"""
-
-graph_builder.add_edge(START, "llm")
-
-
-# ---------------------------------------------------------
-# 10. CONDITIONAL ROUTING
-# ---------------------------------------------------------
-
-"""
-After Qwen responds, tools_condition checks:
-
-Did Qwen request a tool?
-
-        YES
-         ↓
-       tools
-
-        NO
-         ↓
-       END
-"""
-
-graph_builder.add_conditional_edges("llm", tools_condition)
-
-
-# ---------------------------------------------------------
-# 11. AFTER TOOL EXECUTION, GO BACK TO QWEN
-# ---------------------------------------------------------
-
-"""
-After a tool executes, its result goes back to Qwen.
-
-For example:
-
-User:
-"Who is employee 101?"
-
-        ↓
-
-Qwen:
-"I need SQL."
-
-        ↓
-
-SQL tool:
-"Employee 101 is John..."
-
-        ↓
-
-Qwen:
-"Employee 101 is John..."
-"""
-
-graph_builder.add_edge("tools", "llm")
-
-
-# ---------------------------------------------------------
-# 12. COMPILE THE GRAPH
-# ---------------------------------------------------------
-
-graph = graph_builder.compile()
+refresh_agent_tools()
 
 
 # ---------------------------------------------------------

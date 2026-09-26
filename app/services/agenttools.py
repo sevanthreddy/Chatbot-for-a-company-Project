@@ -9,7 +9,20 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
-CURRENT_USER_ROLE = "general"
+CURRENT_USER_ROLE = None
+
+
+import re
+
+EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
+
+def protect_pii(text: str) -> str:
+    """
+    Redacts email addresses from tool results.
+    """
+
+    return EMAIL_PATTERN.sub("[REDACTED_EMAIL]", text)
 
 
 def get_cached_huggingface_embeddings(model_name: str):
@@ -32,80 +45,53 @@ def get_cached_huggingface_embeddings(model_name: str):
     return _load_model(model_name)
 
 
-@tool
-def sql_query(sql_query: str) -> str:
-    """
-    Executes a SQL SELECT query against the company HR database.
+def get_sql_tool(current_user_role):
 
-    Database:
-    companydb
+    if not current_user_role or current_user_role.lower() != "hr":
+        return None
 
-    Schema:
-    ai_schema
+    @tool
+    def sql_query(sql_query: str) -> str:
+        """
+        Execute a read-only SQL query against the ai_schema.EmployeeData view.
 
-    views:
-    ai_schema.EmployeeData
+        IMPORTANT:
+        - The ONLY allowed table/view is ai_schema.EmployeeData.
+        - NEVER use employees, dbo.Employees, or any other table.
+        - The SQL must be a SELECT query.
+        - Use T-SQL syntax.
 
-    Columns available:
-    employee_id,
-    full_name,
-    role,
-    department,
-    email,
-    location,
-    date_of_birth,
-    date_of_joining,
-    manager_id,
-    salary,
-    leave_balance,
-    leaves_taken,
-    attendance_pct,
-    performance_rating,
-    last_review_date
+        Example:
 
-    Employee IDs are strings such as:
-    FINEMP1000, FINEMP1001, FINEMP1002.
+        SELECT *
+        FROM ai_schema.EmployeeData
+        WHERE employee_id = 'FINEMP1005'
+        """
 
-    Always use ai_schema.EmployeeData when querying employee information.
+        try:
+            connection_string = (
+                f"mssql+pymssql://"
+                f"{os.getenv('AI_DB_USER')}:"
+                f"{urllib.parse.quote_plus(os.getenv('AI_DB_PASSWORD'))}"
+                f"@localhost:1434/"
+                f"{os.getenv('DB_DATABASE')}"
+            )
 
-    Always write standard T-SQL queries.
+            engine = create_engine(connection_string)
 
-    Examples:
+            with engine.connect() as connection:
+                result = connection.execute(text(sql_query))
 
-    For employee salary:
-    SELECT salary
-    FROM ai_schema.EmployeeData
-    WHERE employee_id = 'FINEMP1000'
+                columns = list(result.keys())
+                rows = result.fetchall()
 
-    For employee leave balance:
-    SELECT leave_balance
-    FROM ai_schema.EmployeeData
-    WHERE employee_id = 'FINEMP1000'
-    """
+                data = [dict(zip(columns, row)) for row in rows]
+                result = str(data)
+                return protect_pii(result)
+        except Exception as e:
+            return f"Error executing SQL query: {e}"
 
-    try:
-        connection_string = (
-            f"mssql+pymssql://"
-            f"{os.getenv('AI_DB_USER')}:"
-            f"{urllib.parse.quote_plus(os.getenv('AI_DB_PASSWORD'))}"
-            f"@localhost:1434/"
-            f"{os.getenv('DB_DATABASE')}"
-        )
-
-        engine = create_engine(connection_string)
-
-        with engine.connect() as connection:
-            result = connection.execute(text(sql_query))
-
-            columns = list(result.keys())
-            rows = result.fetchall()
-
-            data = [dict(zip(columns, row)) for row in rows]
-
-            return str(data)
-
-    except Exception as e:
-        return f"Error executing SQL query: {e}"
+    return sql_query
 
 
 @tool
@@ -161,10 +147,12 @@ def vector_search(query: str) -> str:
 
 
 if __name__ == "__main__":
-    print(
-        sql_query.invoke(
-            {
-                "sql_query": "SELECT TOP 5 employee_id, full_name, salary FROM dbo.hr_data"
-            }
+    sql_tool = get_sql_tool("hr")
+    if sql_tool:
+        print(
+            sql_tool.invoke(
+                {
+                    "sql_query": "SELECT TOP 5 employee_id, full_name, salary FROM ai_schema.EmployeeData"
+                }
+            )
         )
-    )
